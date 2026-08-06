@@ -1,0 +1,29 @@
+#!/usr/bin/env php
+<?php
+
+define('LARAVEL_START', microtime(true));
+
+error_reporting(E_ALL);
+ini_set('display_errors', '1');
+
+require __DIR__.'/vendor/autoload.php';
+
+try {
+    $app = require_once __DIR__.'/bootstrap/app.php';
+    
+    echo "App created successfully\n";
+    echo "Config service available: " . ($app->has('config') ? 'yes' : 'no') . "\n";
+    
+    $kernel = $app->make(\Illuminate\Contracts\Console\Kernel::class);
+    echo "Console kernel created successfully\n";
+    
+    exit($kernel->handle($argc, $argv));
+} catch (Throwable $e) {
+    echo "Error Type: " . get_class($e) . "\n";
+    echo "Message: " . $e->getMessage() . "\n";
+    echo "File: " . $e->getFile() . "\n";
+    echo "Line: " . $e->getLine() . "\n";
+    echo "\nStack Trace:\n";
+    echo $e->getTraceAsString() . "\n";
+    exit(1);
+}
