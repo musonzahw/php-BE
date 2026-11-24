@@ -53,7 +53,7 @@ $data = json_decode($response, true);
 $token = $data['token'] ?? $token;
 if ($token) {
     echo "3. Testing Protected User Endpoint\n";
-    
+
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, "$baseUrl/auth/user");
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -62,11 +62,11 @@ if ($token) {
         "Authorization: Bearer $token"
     ]);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-    
+
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    
+
     echo "Status: $httpCode\n";
     echo "Response: " . json_encode(json_decode($response), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n\n";
 }

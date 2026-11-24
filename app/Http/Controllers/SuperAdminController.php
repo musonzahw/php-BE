@@ -26,7 +26,7 @@ class SuperAdminController extends Controller
         return null;
     }
 
-   
+
     public function getAllTeachers(): JsonResponse
     {
         if ($response = $this->ensureSuperAdmin()) {
@@ -43,7 +43,7 @@ class SuperAdminController extends Controller
         ]);
     }
 
-   
+
     public function getTeacher(int $id): JsonResponse
     {
         if ($response = $this->ensureSuperAdmin()) {
@@ -59,7 +59,7 @@ class SuperAdminController extends Controller
         return response()->json(['teacher' => $teacher]);
     }
 
-    
+
     public function createTeacher(Request $request): JsonResponse
     {
         if ($response = $this->ensureSuperAdmin()) {

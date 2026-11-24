@@ -73,7 +73,7 @@ class AuthController extends Controller
         ], 201);
     }
 
-    
+
     public function login(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -134,10 +134,8 @@ class AuthController extends Controller
 
     public function logout(Request $request): JsonResponse
     {
-        // Blacklist the current JWT
         JWTAuth::invalidate(JWTAuth::getToken());
 
-        // Revoke the refresh token if provided
         if ($request->refresh_token) {
             $hashed = hash('sha256', $request->refresh_token);
             RefreshToken::where('token', $hashed)->update(['revoked' => true]);
@@ -164,7 +162,7 @@ class AuthController extends Controller
         ]);
     }
 
-    
+
     public function updateUser(Request $request, int $id): JsonResponse
     {
         $caller = auth()->user();
@@ -219,12 +217,11 @@ class AuthController extends Controller
         ]);
     }
 
-    
+
     public function deleteUser(int $id): JsonResponse
     {
         $caller = auth()->user();
 
-        // Only super_admin and admin can delete users
         if (! in_array($caller->role, [Role::SuperAdmin, Role::Admin])) {
             return response()->json(['message' => 'Forbidden. You do not have permission to delete users.'], 403);
         }

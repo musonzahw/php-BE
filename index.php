@@ -14,7 +14,7 @@ $composerLock = LARAVEL_PATH . '/composer.lock';
 if (!is_dir($vendorPath) || count(glob($vendorPath . '/*')) < 30) {
     echo "📦 Composer is still downloading and installing dependencies...\n\n";
     echo "   Installation Progress:\n";
-    
+
     $count = 0;
     if (is_dir($vendorPath)) {
         $count = count(glob($vendorPath . '/*'));

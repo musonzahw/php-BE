@@ -26,7 +26,7 @@ return [
                 env('MEMCACHED_USERNAME') => env('MEMCACHED_PASSWORD'),
             ],
             'options' => [
-                
+
             ],
             'servers' => [
                 [

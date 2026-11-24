@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Validator;
 
 class ClassController extends Controller
 {
-   
+
     public function index(): JsonResponse
     {
         $caller = auth()->user();
@@ -32,7 +32,7 @@ class ClassController extends Controller
         ]);
     }
 
-    
+
     public function store(Request $request): JsonResponse
     {
         $caller = auth()->user();
@@ -70,7 +70,7 @@ class ClassController extends Controller
         ], 201);
     }
 
-   
+
     public function update(Request $request, int $id): JsonResponse
     {
         $caller = auth()->user();
@@ -117,7 +117,7 @@ class ClassController extends Controller
         ]);
     }
 
-  
+
     public function destroy(int $id): JsonResponse
     {
         $caller = auth()->user();
@@ -141,7 +141,7 @@ class ClassController extends Controller
         return response()->json(['message' => 'Class deleted successfully']);
     }
 
-   
+
     public function enroll(Request $request, int $id): JsonResponse
     {
         $caller = auth()->user();

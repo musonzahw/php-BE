@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Validator;
 
 class AdmissionController extends Controller
 {
-   
+
     public function apply(Request $request): JsonResponse
     {
         if (auth()->user()->role !== Role::Student) {

@@ -12,9 +12,6 @@ enum Role: string
     case Student      = 'student';
     case Teacher      = 'teacher';
 
-    /**
-     * Roles that a regular admin is allowed to delete.
-     */
     public static function adminDeletable(): array
     {
         return [

@@ -10,7 +10,7 @@ return [
 
         'public' => env('JWT_PUBLIC_KEY'),
 
-    
+
 
         'private' => env('JWT_PRIVATE_KEY'),
 
@@ -34,7 +34,7 @@ return [
     'persistent_claims' => [
     ],
 
-   
+
     'lock_subject' => true,
     'leeway' => env('JWT_LEEWAY', 0),
     'blacklist_enabled' => env('JWT_BLACKLIST_ENABLED', true),

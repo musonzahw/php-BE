@@ -14,7 +14,7 @@ return new class extends Migration
             $table->string('surname');
             $table->foreignId('class_id')->constrained('classes')->onDelete('cascade');
             $table->string('results_file')->nullable();
-            $table->string('status')->default('pending'); // pending, approved, rejected
+            $table->string('status')->default('pending');
             $table->timestamps();
         });
     }

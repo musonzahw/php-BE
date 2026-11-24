@@ -10,7 +10,7 @@ use Illuminate\Contracts\Console\Application;
 
 class ErrorHandler extends ExceptionHandler
 {
-    
+
     public function renderForConsole($output, Throwable $e): void
     {
 
