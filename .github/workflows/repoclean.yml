@@ -1,0 +1,262 @@
+# RepoClean GitHub Action for musonzahw/php-BE (master)
+# Supports:
+#   1. commit-skip-deploy: Applies .repoclean/repoclean.patch (if present) or runs the reviewed cleanup rules,
+#      then commits & pushes with "[skip ci] [skip deploy]" so your actual GitHub repo is cleaned without redeploying
+#      on Render or Vercel (with Ignored Build Step). On Cloudflare Workers, pause Git builds before running.
+#   2. dry-run: Previews what would be pruned/cleaned without modifying or committing anything.
+#   3. workspace-only: Cleans runner workspace only without committing (useful before a build step).
+
+name: RepoClean Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Cleanup mode"
+        required: true
+        default: "commit-skip-deploy"
+        type: choice
+        options:
+          - "commit-skip-deploy"
+          - "dry-run"
+          - "workspace-only"
+      patch_path:
+        description: "Optional .patch file path in repo (if uploaded)"
+        required: false
+        default: ".repoclean/repoclean.patch"
+        type: string
+
+jobs:
+  repoclean:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run RepoClean cleanup
+        env:
+          CLEAN_MODE: ${{ inputs.mode || 'commit-skip-deploy' }}
+          PATCH_PATH: ${{ inputs.patch_path || '.repoclean/repoclean.patch' }}
+        run: |
+          cat <<'EOF' > /tmp/repoclean_config.json
+          {
+            "repository": "musonzahw/php-BE",
+            "branch": "master",
+            "prune_paths": [],
+            "skip_paths": [],
+            "options": {
+              "remove_comments": true,
+              "strip_docstrings": false,
+              "keep_license_headers": true,
+              "keep_linter_directives": true,
+              "format_code": true,
+              "max_blank_lines": 1,
+              "format_json": true
+            },
+            "unused_imports_count": 0
+          }
+          EOF
+
+          if [ "$CLEAN_MODE" != "dry-run" ] && [ -n "$PATCH_PATH" ] && [ -f "$PATCH_PATH" ]; then
+            echo "Applying reviewed patch: $PATCH_PATH"
+            git apply --whitespace=nowarn "$PATCH_PATH"
+            rm -f "$PATCH_PATH"
+            rmdir "$(dirname "$PATCH_PATH")" 2>/dev/null || true
+            python3 - <<'PY'
+          import json, os
+          with open("/tmp/repoclean_config.json", "r", encoding="utf-8") as fh:
+              cfg = json.load(fh)
+          removed_bin = 0
+          for rel in cfg["prune_paths"]:
+              if os.path.isfile(rel):
+                  os.remove(rel)
+                  removed_bin += 1
+          summary_md = (
+              f"### RepoClean Patch Applied ({cfg['repository']})\n"
+              f"- Applied uploaded `.patch` file and removed it from the tree\n"
+              f"- Additional redundant/binary files removed: **{removed_bin}**\n"
+          )
+          print(summary_md)
+          step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if step_summary:
+              with open(step_summary, "a", encoding="utf-8") as sf:
+                  sf.write(summary_md)
+          PY
+          else
+            python3 - <<'PY'
+          import io, json, os, re, tokenize
+
+          with open("/tmp/repoclean_config.json", "r", encoding="utf-8") as fh:
+              cfg = json.load(fh)
+
+          dry_run = os.environ.get("CLEAN_MODE", "commit-skip-deploy") == "dry-run"
+          opts = cfg["options"]
+          skip_set = set(cfg["skip_paths"])
+          pruned = 0
+          cleaned_files = 0
+          comments_stripped = 0
+
+          DIRECTIVES = (
+              "noqa", "type:", "pragma:", "pylint:", "fmt:", "isort:", "mypy:",
+              "eslint-", "@ts-", "prettier-ignore", "biome-ignore", "webpack",
+          )
+          LICENSES = ("spdx-license-identifier", "copyright", "licensed under", "mit license", "apache license")
+
+          def keep_comment(text, line_no):
+              low = text.lower()
+              if opts["keep_license_headers"] and line_no <= 20 and any(k in low for k in LICENSES):
+                  return True
+              if opts["keep_linter_directives"] and any(d in low for d in DIRECTIVES):
+                  return True
+              return False
+
+          def strip_py(src):
+              count = 0
+              lines = src.splitlines(keepends=True)
+              spans = []
+              try:
+                  for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+                      if tok.type == tokenize.COMMENT and not keep_comment(tok.string, tok.start[0]):
+                          spans.append((tok.start[0] - 1, tok.start[1], tok.end[0] - 1, tok.end[1]))
+              except (tokenize.TokenError, IndentationError):
+                  return src, 0
+              if not spans:
+                  return src, 0
+              out = list(lines)
+              for sr, sc, er, ec in sorted(spans, reverse=True):
+                  if sr == er:
+                      line = out[sr]
+                      eol = "\n" if line.endswith("\n") else ""
+                      body = line[:-1] if eol else line
+                      merged = (body[:sc].rstrip() + body[ec:])
+                      out[sr] = "" if (body[:sc].strip() == "" and body[ec:].strip() == "") else merged + eol
+                      count += 1
+              return "".join(out), count
+
+          def strip_c_style(src):
+              out = []
+              i, n, line_no, count = 0, len(src), 1, 0
+              while i < n:
+                  ch = src[i]
+                  if ch in ('"', "'", "`"):
+                      q = ch
+                      out.append(ch); i += 1
+                      while i < n:
+                          c = src[i]; out.append(c)
+                          if c == "\n": line_no += 1
+                          if c == "\\" and i + 1 < n:
+                              out.append(src[i + 1]); i += 2; continue
+                          i += 1
+                          if c == q: break
+                      continue
+                  if src.startswith("//", i):
+                      end = src.find("\n", i)
+                      if end == -1: end = n
+                      txt = src[i:end]
+                      if keep_comment(txt, line_no):
+                          out.append(txt); i = end
+                      else:
+                          count += 1
+                          while out and out[-1] in (" ", "\t"): out.pop()
+                          i = end
+                      continue
+                  if src.startswith("/*", i):
+                      end = src.find("*/", i + 2)
+                      end = n if end == -1 else end + 2
+                      txt = src[i:end]
+                      is_doc = txt.startswith("/**") and not txt.startswith("/***")
+                      if (is_doc and not opts["strip_docstrings"]) or keep_comment(txt, line_no):
+                          out.append(txt)
+                          line_no += txt.count("\n")
+                      else:
+                          count += 1
+                          out.append("\n" * txt.count("\n"))
+                          line_no += txt.count("\n")
+                      i = end
+                      continue
+                  if ch == "\n": line_no += 1
+                  out.append(ch); i += 1
+              return "".join(out), count
+
+          for rel in cfg["prune_paths"]:
+              if os.path.isfile(rel):
+                  pruned += 1
+                  if not dry_run:
+                      os.remove(rel)
+
+          if opts["remove_comments"] or opts["format_code"]:
+              for root, dirs, files in os.walk("."):
+                  dirs[:] = [d for d in dirs if d not in (".git", "node_modules", ".next", "__pycache__")]
+                  for fn in files:
+                      rel = os.path.relpath(os.path.join(root, fn), ".").replace(os.sep, "/")
+                      if rel in skip_set:
+                          continue
+                      ext = os.path.splitext(fn)[1].lower()
+                      if ext not in (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".css", ".scss", ".go", ".rs", ".java"):
+                          continue
+                      try:
+                          with open(rel, "r", encoding="utf-8") as fh:
+                              orig = fh.read()
+                      except UnicodeDecodeError:
+                          continue
+                      text = orig
+                      if opts["remove_comments"]:
+                          if ext == ".py":
+                              text, c = strip_py(text)
+                              comments_stripped += c
+                          elif ext != ".json":
+                              text, c = strip_c_style(text)
+                              comments_stripped += c
+                      if opts["format_json"] and ext == ".json":
+                          try:
+                              text = json.dumps(json.loads(text), indent=2) + "\n"
+                          except Exception:
+                              pass
+                      elif opts["format_code"]:
+                          text = text.replace("\r\n", "\n").replace("\r", "\n")
+                          lines = [ln.rstrip() for ln in text.splitlines()]
+                          text = "\n".join(lines).rstrip("\n") + "\n" if lines else ""
+                          max_bl = max(0, int(opts["max_blank_lines"]))
+                          text = re.sub(r"\n(' + str(max_bl + 2) + r',)", "\n" * (max_bl + 1), text)
+                      if text != orig:
+                          cleaned_files += 1
+                          if not dry_run:
+                              with open(rel, "w", encoding="utf-8") as fh:
+                                  fh.write(text)
+
+          summary_md = (
+              f"### RepoClean Summary ({cfg['repository']})\n"
+              f"- Mode: **{os.environ.get('CLEAN_MODE')}**\n"
+              f"- Redundant files pruned: **{pruned}**\n"
+              f"- Source files cleaned: **{cleaned_files}**\n"
+              f"- Comments stripped: **{comments_stripped}**\n"
+              f"- Unused Python imports flagged during review: **{cfg['unused_imports_count']}**\n"
+          )
+          print(summary_md)
+          step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if step_summary:
+              with open(step_summary, "a", encoding="utf-8") as sf:
+                  sf.write(summary_md)
+          PY
+          fi
+
+      - name: Commit and push cleaned files (skip CI/deploy)
+        if: ${{ (inputs.mode || 'commit-skip-deploy') == 'commit-skip-deploy' }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Repository already clean; nothing to commit."
+            exit 0
+          fi
+          git config user.name "repoclean-bot"
+          git config user.email "repoclean-bot@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: repo cleanup [skip ci] [skip deploy]"
+          git push
