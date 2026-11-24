@@ -141,18 +141,52 @@ jobs:
                       count += 1
               return "".join(out), count
 
-          def strip_c_style(src):
+          def strip_hash(src, is_php=False):
+              out, count = [], 0
+              for idx, line in enumerate(src.splitlines(keepends=True)):
+                  if idx == 0 and line.startswith("#!"):
+                      out.append(line); continue
+                  in_s, in_d, esc, cidx = False, False, False, None
+                  for i, ch in enumerate(line):
+                      if esc: esc = False; continue
+                      if ch == chr(92) and (in_s or in_d): esc = True; continue
+                      if ch == "'" and not in_d: in_s = not in_s; continue
+                      if ch == '"' and not in_s: in_d = not in_d; continue
+                      if ch == "#" and not in_s and not in_d:
+                          if is_php:
+                              nxt = line[i + 1] if i + 1 < len(line) else ""
+                              if nxt == "[" or (i > 0 and line[i - 1] not in (" ", "\t", ";")):
+                                  continue
+                              if nxt not in (" ", "\t", "\r", "\n", ""):
+                                  continue
+                          elif i > 0 and line[i - 1] not in (" ", "\t", ";"):
+                              continue
+                          cidx = i; break
+                  if cidx is None:
+                      out.append(line); continue
+                  ctxt = line[cidx:]
+                  if keep_comment(ctxt, idx + 1):
+                      out.append(line); continue
+                  count += 1
+                  pref = line[:cidx]
+                  if pref.strip() == "":
+                      continue
+                  eol = "\n" if line.endswith("\n") else ""
+                  out.append(pref.rstrip(" \t") + eol)
+              return "".join(out), count
+
+          def strip_c_style(src, is_js_ts=False):
               out = []
               i, n, line_no, count = 0, len(src), 1, 0
               while i < n:
                   ch = src[i]
-                  if ch in ('"', "'", "`"):
+                  if ch in ('"', "'") or (is_js_ts and ch == "`"):
                       q = ch
                       out.append(ch); i += 1
                       while i < n:
                           c = src[i]; out.append(c)
                           if c == "\n": line_no += 1
-                          if c == "\\" and i + 1 < n:
+                          if c == chr(92) and i + 1 < n:
                               out.append(src[i + 1]); i += 2; continue
                           i += 1
                           if c == q: break
@@ -165,25 +199,76 @@ jobs:
                           out.append(txt); i = end
                       else:
                           count += 1
-                          while out and out[-1] in (" ", "\t"): out.pop()
-                          i = end
+                          ls = len(out)
+                          while ls > 0 and out[ls - 1] != "\n": ls -= 1
+                          pref = "".join(out[ls:])
+                          if pref.strip() == "":
+                              del out[ls:]
+                              if end < n and src[end] == "\n":
+                                  line_no += 1; i = end + 1
+                              else:
+                                  i = end
+                          else:
+                              del out[ls:]; out.append(pref.rstrip(" \t")); i = end
                       continue
                   if src.startswith("/*", i):
                       end = src.find("*/", i + 2)
-                      end = n if end == -1 else end + 2
-                      txt = src[i:end]
+                      end = n - 2 if end == -1 else end
+                      txt = src[i:end + 2]
                       is_doc = txt.startswith("/**") and not txt.startswith("/***")
-                      if (is_doc and not opts["strip_docstrings"]) or keep_comment(txt, line_no):
-                          out.append(txt)
-                          line_no += txt.count("\n")
+                      if (is_doc and not opts["strip_docstrings"] and is_js_ts) or keep_comment(txt, line_no):
+                          out.append(txt); line_no += txt.count("\n"); i = end + 2
                       else:
                           count += 1
-                          out.append("\n" * txt.count("\n"))
                           line_no += txt.count("\n")
-                      i = end
+                          ls = len(out)
+                          while ls > 0 and out[ls - 1] != "\n": ls -= 1
+                          pref = "".join(out[ls:])
+                          after = end + 2
+                          rend = src.find("\n", after)
+                          if rend == -1: rend = n
+                          rest = src[after:rend]
+                          if pref.strip() == "" and rest.strip() == "":
+                              del out[ls:]
+                              if rend < n and src[rend] == "\n":
+                                  line_no += 1; i = rend + 1
+                              else:
+                                  i = rend
+                          else:
+                              i = after
                       continue
                   if ch == "\n": line_no += 1
                   out.append(ch); i += 1
+              return "".join(out), count
+
+          def strip_html(src):
+              count = 0
+              def repl(m):
+                  nonlocal count
+                  t = m.group(0)
+                  if opts["keep_license_headers"] and any(k in t.lower() for k in LICENSES):
+                      return t
+                  count += 1
+                  return ""
+              return re.sub(r"<!--[\s\S]*?-->", repl, src), count
+
+          def strip_sql(src):
+              out, count = [], 0
+              for idx, line in enumerate(src.splitlines(keepends=True)):
+                  in_s, i = False, 0
+                  cidx = None
+                  while i < len(line):
+                      if line[i] == "'": in_s = not in_s
+                      elif not in_s and line.startswith("--", i):
+                          cidx = i; break
+                      i += 1
+                  if cidx is None or keep_comment(line[cidx:], idx + 1):
+                      out.append(line); continue
+                  count += 1
+                  pref = line[:cidx]
+                  if pref.strip() == "": continue
+                  eol = "\n" if line.endswith("\n") else ""
+                  out.append(pref.rstrip(" \t") + eol)
               return "".join(out), count
 
           for rel in cfg["prune_paths"]:
@@ -192,15 +277,21 @@ jobs:
                   if not dry_run:
                       os.remove(rel)
 
+          JS_EXTS = set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"])
+          C_EXTS = set([".php", ".css", ".scss", ".less", ".go", ".rs", ".java", ".c", ".h", ".cpp", ".cc", ".hpp", ".cs", ".swift", ".kt", ".jsonc"])
+          HASH_EXTS = set([".sh", ".bash", ".zsh", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".rb"])
+          HTML_EXTS = set([".html", ".htm", ".xml", ".svg", ".vue", ".svelte", ".md", ".mdx"])
+          ALL_EXTS = set([".py", ".json", ".sql", ".txt"]) | JS_EXTS | C_EXTS | HASH_EXTS | HTML_EXTS
+
           if opts["remove_comments"] or opts["format_code"]:
               for root, dirs, files in os.walk("."):
-                  dirs[:] = [d for d in dirs if d not in (".git", "node_modules", ".next", "__pycache__")]
+                  dirs[:] = [d for d in dirs if d not in (".git", ".github", "node_modules", ".next", "__pycache__", "vendor")]
                   for fn in files:
                       rel = os.path.relpath(os.path.join(root, fn), ".").replace(os.sep, "/")
                       if rel in skip_set:
                           continue
                       ext = os.path.splitext(fn)[1].lower()
-                      if ext not in (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".css", ".scss", ".go", ".rs", ".java"):
+                      if ext not in ALL_EXTS:
                           continue
                       try:
                           with open(rel, "r", encoding="utf-8") as fh:
@@ -210,11 +301,20 @@ jobs:
                       text = orig
                       if opts["remove_comments"]:
                           if ext == ".py":
-                              text, c = strip_py(text)
-                              comments_stripped += c
-                          elif ext != ".json":
-                              text, c = strip_c_style(text)
-                              comments_stripped += c
+                              text, c = strip_py(text); comments_stripped += c
+                          elif ext in JS_EXTS:
+                              text, c = strip_c_style(text, is_js_ts=True); comments_stripped += c
+                          elif ext == ".php":
+                              text, c = strip_c_style(text, is_js_ts=False); comments_stripped += c
+                              text, c2 = strip_hash(text, is_php=True); comments_stripped += c2
+                          elif ext in C_EXTS:
+                              text, c = strip_c_style(text, is_js_ts=False); comments_stripped += c
+                          elif ext in HASH_EXTS:
+                              text, c = strip_hash(text, is_php=False); comments_stripped += c
+                          elif ext in HTML_EXTS:
+                              text, c = strip_html(text); comments_stripped += c
+                          elif ext == ".sql":
+                              text, c = strip_sql(text); comments_stripped += c
                       if opts["format_json"] and ext == ".json":
                           try:
                               text = json.dumps(json.loads(text), indent=2) + "\n"
